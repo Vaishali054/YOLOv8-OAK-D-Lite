@@ -11,8 +11,9 @@ import time
 
 # Define path to the model, test data directory, and results
 
-YOLOV8N_MODEL = "/home/jaykumaran/Blogs/Poth-hole-Detection/Final Media/Yolov8-2022.1-blob/yolov8n-pothole-best_openvino_2022.1_8shave.blob" #Adjust path accordingly
-YOLOV8N_CONFIG = "/home/jaykumaran/Blogs/Poth-hole-Detection/Final Media/Yolov8-2022.1-blob/yolov8n-pothole-best.json" #Adjust path accordingly
+YOLOV8N_MODEL = r"models_img_sz=960\yolov8n-pothole-best_openvino_2022.1_8shave.blob"
+YOLOV8N_CONFIG = r"models_img_sz=960\yolov8n-pothole-best.json"
+
 
 INPUT_VIDEO = "videoplayback.mp4"
 OUTPUT_VIDEO = "vid_result/960-oak-d-videoplayback_video.mp4"

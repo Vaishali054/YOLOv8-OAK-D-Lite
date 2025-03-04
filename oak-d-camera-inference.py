@@ -1,5 +1,3 @@
-# !python3 -m pip install depthai
-
 import os
 import json
 import numpy as np
@@ -9,10 +7,10 @@ import depthai as dai
 import time
 
 # Define path to the model and configuration
-YOLOV8N_MODEL = "Yolov8-2022.1-blob/yolov8n-pothole-best_openvino_2022.1_8shave.blob"  #Adjust path accordingly
-YOLOV8N_CONFIG = "Yolov8-2022.1-blob/yolov8n-pothole-best.json" #Adjust path accordingly
+YOLOV8N_MODEL = r"models_img_sz=960\yolov8n-pothole-best_openvino_2022.1_8shave.blob"
+YOLOV8N_CONFIG = r"models_img_sz=960\yolov8n-pothole-best.json"
 
-OUTPUT_VIDEO = "vid_result/960-oak-d-live_video.mp4" #Adjust path accordingly
+OUTPUT_VIDEO = "vid_result/960-oak-d-live_video.mp4"  # Adjust path accordingly
 
 CAMERA_PREV_DIM = (960, 960)
 LABELS = ["Pot-hole"]
@@ -20,7 +18,7 @@ LABELS = ["Pot-hole"]
 def load_config(config_path):
     with open(config_path) as f:
         return json.load(f)
-    
+
 def create_camera_pipeline(config_path, model_path):
     pipeline = dai.Pipeline()
     model_config = load_config(config_path)
@@ -42,8 +40,10 @@ def create_camera_pipeline(config_path, model_path):
 
     detectionNetwork = pipeline.create(dai.node.YoloDetectionNetwork)
     nnOut = pipeline.create(dai.node.XLinkOut)
+    previewOut = pipeline.create(dai.node.XLinkOut)  # Create output for preview
 
     nnOut.setStreamName("nn")
+    previewOut.setStreamName("preview")  # Set preview stream name
 
     detectionNetwork.setConfidenceThreshold(confidenceThreshold)
     detectionNetwork.setNumClasses(classes)
@@ -56,7 +56,8 @@ def create_camera_pipeline(config_path, model_path):
     detectionNetwork.input.setBlocking(False)
 
     # Linking
-    camRgb.preview.link(detectionNetwork.input)
+    camRgb.preview.link(previewOut.input)  # Link camera preview to previewOut
+    camRgb.preview.link(detectionNetwork.input)  # Link camera preview to detection network input
     detectionNetwork.out.link(nnOut.input)
 
     return pipeline
@@ -92,6 +93,7 @@ os.makedirs(os.path.dirname(OUTPUT_VIDEO), exist_ok=True)
 with dai.Device(pipeline) as device:
     # Define the queue that will be used to receive the neural network output
     detectionNN = device.getOutputQueue("nn", maxSize=4, blocking=False)
+    previewQueue = device.getOutputQueue("preview", maxSize=4, blocking=False)  # Retrieve preview queue
 
     # Video writer to save the output video
     fps = 30  # Assuming 30 FPS for the OAK-D camera
@@ -108,8 +110,9 @@ with dai.Device(pipeline) as device:
             detections = inDet.detections
             print("Detections", detections)
         
-        # Retrieve the frame from the camera preview
-        frame = inDet.getFrame()
+        # Retrieve the frame from the camera preview directly from the preview queue
+        frame = previewQueue.get()  # Fetch frame from preview queue
+        frame = frame.getCvFrame()  # Convert to OpenCV format
         frame_count += 1
 
         # Calculate the FPS

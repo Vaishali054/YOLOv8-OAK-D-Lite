@@ -5,31 +5,43 @@ import cv2
 from pathlib import Path
 import depthai as dai
 
-# Define path to the model, test data directory, and results
-YOLOV8N_MODEL = "yolov8-960-blob-result/best_openvino_2022.1_8shave.blob" #Adjust path accordingly
-YOLOV8N_CONFIG = "yolov8-960-blob-result/best.json" #Adjust path accordingly
-TEST_DATA = "img-40_jpg.rf.80b05d1760d1169f29d5fd2cf3120ae9.jpg" #Adjust path accordingly
-OUTPUT_IMAGES_YOLOv8n = "result/gesture_pred_images_v8n" #Adjust path accordingly
+YOLOV8N_MODEL = r"models_img_sz=960\yolov8n-pothole-best_openvino_2022.1_8shave.blob"
+
+YOLOV8N_CONFIG = r"models_img_sz=960\yolov8n-pothole-best.json"
+
+TEST_DATA = "img-40_jpg.rf.80b05d1760d1169f29d5fd2cf3120ae9.jpg"
+OUTPUT_IMAGES_YOLOv8n = "result/gesture_pred_images_v8n"
 CAMERA_PREV_DIM = (960, 960)
 LABELS = ["Pot-hole"]
-# LABELS = 
 
 def load_config(config_path):
     with open(config_path) as f:
-        return json.load(f)
+        config = json.load(f)
+    
+    # Handle missing keys gracefully
+    nn_config = config.get("nn_config", {})
+    metadata = nn_config.get("NN_specific_metadata", {})
+    classes = metadata.get("classes", [])
+    coordinates = metadata.get("coordinates", [])
+    anchors = metadata.get("anchors", [])
+    anchor_masks = metadata.get("anchor_masks", [])
+    iou_threshold = metadata.get("iou_threshold", 0.4)
+    confidence_threshold = metadata.get("confidence_threshold", 0.5)
+    
+    return {
+        "nn_config": nn_config,
+        "classes": classes,
+        "coordinates": coordinates,
+        "anchors": anchors,
+        "anchor_masks": anchor_masks,
+        "iou_threshold": iou_threshold,
+        "confidence_threshold": confidence_threshold
+    }
 
 def create_image_pipeline(config_path, model_path):
     pipeline = dai.Pipeline()
     model_config = load_config(config_path)
-    nnConfig = model_config.get("nn_config", {})
-    metadata = nnConfig.get("NN_specific_metadata", {})
-    classes = metadata.get("classes", {})
-    coordinates = metadata.get("coordinates", {})
-    anchors = metadata.get("anchors", {})
-    anchorMasks = metadata.get("anchor_masks", {})
-    iouThreshold = metadata.get("iou_threshold", {})
-    confidenceThreshold = metadata.get("confidence_threshold", {})
-
+    nnConfig = model_config["nn_config"]
     detectionIN = pipeline.create(dai.node.XLinkIn)
     detectionNetwork = pipeline.create(dai.node.YoloDetectionNetwork)
     nnOut = pipeline.create(dai.node.XLinkOut)
@@ -37,12 +49,12 @@ def create_image_pipeline(config_path, model_path):
     nnOut.setStreamName("nn")
     detectionIN.setStreamName("detection_in")
 
-    detectionNetwork.setConfidenceThreshold(confidenceThreshold)
-    detectionNetwork.setNumClasses(classes)
-    detectionNetwork.setCoordinateSize(coordinates)
-    detectionNetwork.setAnchors(anchors)
-    detectionNetwork.setAnchorMasks(anchorMasks)
-    detectionNetwork.setIouThreshold(iouThreshold)
+    detectionNetwork.setConfidenceThreshold(model_config["confidence_threshold"])
+    detectionNetwork.setNumClasses(model_config["classes"])
+    detectionNetwork.setCoordinateSize(model_config["coordinates"])
+    detectionNetwork.setAnchors(model_config["anchors"])
+    detectionNetwork.setAnchorMasks(model_config["anchor_masks"])
+    detectionNetwork.setIouThreshold(model_config["iou_threshold"])
     detectionNetwork.setBlobPath(model_path)
     detectionNetwork.setNumInferenceThreads(2)
     detectionNetwork.input.setBlocking(False)
@@ -70,11 +82,11 @@ def frame_norm(frame, bbox):
     norm_vals[::2] = frame.shape[1]
     return (np.clip(np.array(bbox), 0, 1) * norm_vals).astype(int)
 
-# Create pipeline
-pipeline = create_image_pipeline(YOLOV8N_CONFIG, YOLOV8N_MODEL)
-
 # Ensure output directory exists
 os.makedirs(OUTPUT_IMAGES_YOLOv8n, exist_ok=True)
+
+# Create pipeline
+pipeline = create_image_pipeline(YOLOV8N_CONFIG, YOLOV8N_MODEL)
 
 # Connect to device and start pipeline
 with dai.Device(pipeline) as device:
@@ -82,33 +94,35 @@ with dai.Device(pipeline) as device:
     detectionIN = device.getInputQueue("detection_in")
     detectionNN = device.getOutputQueue("nn")
 
-    # Load the input image and then resize it
+    # Load the input image and resize
     image = cv2.imread(TEST_DATA)
     if image is None:
         raise FileNotFoundError(f"[ERROR] Could not load image {TEST_DATA}")
-
     image_res = cv2.resize(image, CAMERA_PREV_DIM)
     
-    # Initialize depthai NNData() class which is fed with the image data resized and transposed to model input shape
+    # Initialize depthai NNData() class
     nn_data = dai.NNData()
     nn_data.setLayer("input", to_planar(image_res, CAMERA_PREV_DIM))
     
-    # Send the image to detectionIN queue further passed to the detection network for inference as defined in pipeline
+    # Send the image to detectionIN queue
     detectionIN.send(nn_data)
     
     # Fetch the neural network output
     inDet = detectionNN.get()
     if inDet is not None:
         detections = inDet.detections
-        # Annotate the image if object is detected
-        image_res = annotate_frame(image_res, detections)
-        print("Detections",detections)
+        if detections:
+            # Annotate image
+            image_res = annotate_frame(image_res, detections)
+            print("Detections", detections)
+        else:
+            print("[INFO] No detections found.")
     
-    # Write the image to the output path
+    # Save the result
     output_image_path = os.path.join(OUTPUT_IMAGES_YOLOv8n, os.path.basename(TEST_DATA))
     cv2.imwrite(output_image_path, image_res)
     print(f"[INFO] Processed {TEST_DATA} and saved to {output_image_path}")
-
+    
     # Verify if the image was saved
     if os.path.exists(output_image_path):
         print(f"[INFO] Successfully saved the image at {output_image_path}")
